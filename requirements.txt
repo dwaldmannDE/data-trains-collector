@@ -5,5 +5,3 @@ requests
 requests-cache
 requests-ratelimiter
 schedule
-aiohttp
-aiocache
