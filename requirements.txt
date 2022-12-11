@@ -1,0 +1,9 @@
+autopep8
+pydantic
+python-dateutil
+requests
+requests-cache
+requests-ratelimiter
+schedule
+aiohttp
+aiocache
