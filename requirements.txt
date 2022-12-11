@@ -2,6 +2,6 @@ autopep8
 pydantic
 python-dateutil
 requests
-requests-cache
 requests-ratelimiter
+pyrate_limiter
 schedule

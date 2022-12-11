@@ -5,26 +5,21 @@ import logging.config
 import re
 import sys
 import time
-from typing import List, Dict
 from datetime import datetime, timedelta
+from typing import Dict, List
 
 import dateutil.parser
 import schedule
 from pydantic import BaseSettings
-from pyrate_limiter.bucket import MemoryQueueBucket
-from requests import Session as RSession
-from requests_cache import CacheMixin
-from requests_cache.backends import SQLiteCache
-from requests_ratelimiter import LimiterMixin
-
-
-class CachedLimiterSession(CacheMixin, LimiterMixin, RSession):
-    """Session class with caching and rate-limiting behavior. Accepts arguments for both
-         LimiterSession and CachedSession.  """
+from pyrate_limiter import Duration, RequestRate
+from requests import Session
+from requests_ratelimiter import LimiterSession
 
 
 class Settings(BaseSettings):
-    internal_base_url: str = 'https://django.kube-test.itdw.io'
+    internal_api_url: str = 'http://127.0.0.1:8000'
+    internal_api_username: str = 'admin'
+    internal_api_password: str = 'password'
     coach_sequence_base_url: str = 'https://bahn.expert'
     hafas_base_url: str = 'https://v5.db.transport.rest'
     query_when: str = 'now'
@@ -36,41 +31,17 @@ class Settings(BaseSettings):
     query_tram: bool = 'false'
     query_taxi: bool = 'false'
     query_suburban: bool = 'false'
-    query_regional: bool = 'false'
-    query_regionalexp: bool = 'false'
+    query_regional: bool = 'true'
+    query_regionalexp: bool = 'true'
     query_national: bool = 'true'
     query_nationalexpress: bool = 'true'
     query_stopovers: bool = 'true'
     query_pretty: bool = 'false'
     query_remarks: bool = 'true'
     query_polyline: bool = 'false'
-    rate_limit: int = 90
+    external_rate_limit: int = 90
+    internal_rate_limit: int = 500
     debug: bool = 'true'
-
-
-def retry_function(func, *args, **kwargs):
-    # Set the number of retries to 0
-    retries = 0
-
-    # Set the maximum number of retries
-    max_retries = 2
-
-    # Run the function indefinitely
-    while True:
-        try:
-            # Call the function with the provided arguments
-            return func(*args, **kwargs)
-        except Error as e:
-            # Increment the number of retries
-            retries += 1
-
-            # If the maximum number of retries has been reached, handle the error
-            if retries >= max_retries:
-                # Handle the error
-                raise e
-            else:
-                # Continue to the next iteration of the loop and try the function again
-                continue
 
 
 def setup_logging():
@@ -86,12 +57,12 @@ def setup_logging():
 def get_departure_board(eva_number: int):
     """
   Get the arrival board for a given EVA number.
-  
+
   This function sends a GET request to the HAFAS API using the provided EVA number and the settings specified in the Settings class. If the response is successful, it returns the JSON data from the response. Otherwise, it returns an empty list.
-  
+
   Args:
     eva_number: The EVA number to get the arrival board for.
-  
+
   Returns:
     A list containing the arrival board data, or an empty list if there was an error.
   """
@@ -123,7 +94,7 @@ def get_departure_board(eva_number: int):
 
     try:
         # Send the GET request and get the response
-        response = http_session.get(url=url, params=params)
+        response = external_session.get(url=url, params=params)
 
         # Log the request and response
         logging.debug('%s %s %s', response.request.method,
@@ -143,12 +114,12 @@ def get_departure_board(eva_number: int):
 def get_arrival_board(eva_number: int):
     """
   Get the arrival board for a given EVA number.
-  
+
   This function sends a GET request to the HAFAS API using the provided EVA number and the settings specified in the Settings class. If the response is successful, it returns the JSON data from the response. Otherwise, it returns an empty list.
-  
+
   Args:
     eva_number: The EVA number to get the arrival board for.
-  
+
   Returns:
     A list containing the arrival board data, or an empty list if there was an error.
   """
@@ -181,7 +152,7 @@ def get_arrival_board(eva_number: int):
 
     try:
         # Send the GET request and get the response
-        response = http_session.get(url=url, params=params)
+        response = external_session.get(url=url, params=params)
 
         # Log the request and response
         logging.debug('%s %s %s', response.request.method,
@@ -210,7 +181,7 @@ def get_composition(train_number: str, eva_number: int, initial_departure: datet
         'evaNumber': eva_number
     }
     try:
-        with http_session.get(url=url, params=params) as response:
+        with external_session.get(url=url, params=params) as response:
             logging.debug('%s %s %s', response.request.method,
                           response.status_code, response.request.url)
             if response.status_code == 200:
@@ -223,7 +194,7 @@ def get_composition(train_number: str, eva_number: int, initial_departure: datet
 
 
 def get_train_trip(line_name: str, trip_id: str, stopovers: bool = True,
-                   remarks: bool = True, polyline: bool = True, language: str = 'de') -> Dict:
+                   remarks: bool = True, polyline: bool = False, language: str = 'de') -> Dict:
     """
     Retrieves information about a train trip from the HAFAS API.
 
@@ -261,7 +232,7 @@ def get_train_trip(line_name: str, trip_id: str, stopovers: bool = True,
 
     # Make the GET request to the HAFAS API
     try:
-        with http_session.get(url=url, params=params) as response:
+        with external_session.get(url=url, params=params) as response:
             # Log the request method, response status code, and URL
             logging.debug('%s %s %s', response.request.method,
                           response.status_code, response.request.url)
@@ -297,8 +268,8 @@ def get_time_table(eva_number: str) -> List[Dict]:
     """
 
     # Retrieve the departure and arrival boards for the given EVA number
-    departure_board = retry_function(get_departure_board, eva_number)
-    arrival_board = retry_function(get_arrival_board, eva_number)
+    departure_board = get_departure_board(eva_number)
+    arrival_board = get_arrival_board(eva_number)
 
     # Combine the departure and arrival boards into a single list
     time_table = [*departure_board, *arrival_board]
@@ -322,13 +293,13 @@ def get_station_list(usage: str) -> List[Dict]:
         list: A list of dictionaries containing information about the stations.
     """
 
-    url = '{}/stations'.format(Settings().internal_base_url)
+    url = '{}/stations'.format(Settings().internal_api_url)
     params = {
         'usage': usage
     }
 
     try:
-        with http_session.get(url=url, params=params) as response:
+        with internal_session.get(url=url, params=params) as response:
 
             # If the response is successful, process the data
             if response.ok:
@@ -346,7 +317,7 @@ def get_station_list(usage: str) -> List[Dict]:
                 while response['next'] is not None:
                     # If there is, follow the "next" link to get the next page of data
                     url = response['next']
-                    response = http_session.get(url)
+                    response = external_session.get(url)
 
                     logging.info('%s', url)
 
@@ -367,24 +338,257 @@ def get_station_list(usage: str) -> List[Dict]:
         print('Unable to get url {} due to {}.'.format(url, e.__class__))
 
 
-def create_or_update_train(train_details: dict):
-    pass
-
-    url = '{}/trains'.format(Settings().internal_base_url)
+def get_or_create_operator(name: str):
+    result = None
+    url = '{}/operators/'.format(Settings().internal_api_url)
     params = {
-        'journey_id': trip_id
+        'name': name
     }
-
-    try:
-        with http_session.get(url=url, params=params) as response:
-            if response.ok:
-                response = response.json()
-                pass
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            response = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
+                logging.debug('Operator %s was found with id %s.',
+                              name, result['id'])
             else:
-                pass
+                data = {
+                    'name': name
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info(
+                            'Operator %s was created with id %s.', name, result['id'])
+                    else:
+                        logging.error('%s', response.text)
+        else:
+            logging.error('%s', response.text)
+    return result
 
-    except:
-        pass
+
+def get_or_create_line(operator: dict, product: str, number: int, name: str):
+    result = None
+    url = '{}/lines/'.format(Settings().internal_api_url)
+    params = {
+        'operator': operator['id'],
+        'product': product,
+        'number': number,
+    }
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            response = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
+                logging.debug('Line %s was found with id %s.',
+                              name, result['id'])
+            else:
+                data = {
+                    'number': number,
+                    'name': name,
+                    'product': product,
+                    'operator': operator['url']
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info(
+                            'Line %s was created with id %s.', name, result['id'])
+                    else:
+                        logging.error('%s', response.text)
+        else:
+            logging.error('%s', response.text)
+    return result
+
+
+def get_or_create_station(eva_number: int, name: str, lng: float, lat: float):
+    result = None
+    url = '{}/stations/{}'.format(Settings().internal_api_url, eva_number)
+    with internal_session.get(url=url, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            result = response.json()
+            logging.debug('Station %s was found with id %s.',
+                          name, result['id'])
+        else:
+            url = url = '{}/stations/'.format(
+                Settings().internal_api_url, eva_number)
+            data = {
+                'id': eva_number,
+                'name': name,
+                'lng': lng,
+                'lat': lat
+            }
+            with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                logging.debug('%s %s %s', response.request.method,
+                              response.status_code, response.request.url)
+                if response.ok:
+                    result = response.json()
+                    logging.info(
+                        'Station %s was created with id %s.', name, result['id'])
+                else:
+                    logging.error('%s', response.text)
+    return result
+
+
+def create_or_update_train(line: dict, trip_id: str, origin: dict, destination: dict, cancelled: bool = False, date: datetime = datetime.today()):
+    result = None
+    url = '{}/trains/'.format(Settings().internal_api_url)
+    params = {
+        'line': line['id'],
+        'date': date.strftime('%Y-%m-%d'),
+        'tripID': trip_id
+    }
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            response = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
+                logging.debug('Train %s was found with id %s.',
+                              line['name'], result['id'])
+                if result['cancelled'] is not cancelled:
+                    url = result['url']
+                    data = {
+                        'cancelled': cancelled,
+                    }
+                    with internal_session.patch(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                        logging.debug('%s %s %s', response.request.method,
+                                      response.status_code, response.request.url)
+                        if response.ok:
+                            result = response.json()
+                            logging.info(
+                                'Train %s was updated with id %s.', line['name'], result['id'])
+                        else:
+                            logging.error('%s', response.text)
+            else:
+                data = {
+                    'line': line['url'],
+                    'name': '{} {}'.format(line['product'], line['number']),
+                    'date': date.strftime('%Y-%m-%d'),
+                    'trip_id': trip_id,
+                    'cancelled': cancelled,
+                    'origin': origin['url'],
+                    'destination': destination['url']
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info('Train %s was created with id %s.',
+                                     line['name'], result['id'])
+                    else:
+                        logging.error('%s', response.text)
+        else:
+            logging.error('%s', response.text)
+    return result
+
+
+def create_or_update_stopover(idx: int, stopover: dict, train: dict):
+    station = get_or_create_station(eva_number=stopover['stop']['id'], name=stopover['stop']['name'],
+                                    lng=stopover['stop']['location']['longitude'], lat=stopover['stop']['location']['latitude'])
+    result = None
+    url = '{}/stopovers/'.format(Settings().internal_api_url)
+    params = {
+        'train': train['id'],
+        'stop_index': idx,
+    }
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            response = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
+                logging.debug('Stopover %s was found with id %s.',
+                              idx, result['id'])
+                url = result['url']
+                data = {
+                    'departure_actual_time': (stopover['departure'] if stopover['departure'] is not None else None),
+                    'arrival_actual_time': (stopover['arrival'] if stopover['arrival'] is not None else None)
+                }
+                with internal_session.patch(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info(
+                            'Stopopver %s was updated with id %s.', idx, result['id'])
+                    else:
+                        logging.error('%s', response.text)
+            else:
+                data = {
+                    'station': station['url'],
+                    'stop_index': idx,
+                    'train': train['url'],
+                    'platform': (stopover['plannedDeparturePlatform'] if stopover['plannedDeparturePlatform'] is not None else None),
+                    'departure_planned_time': (stopover['plannedDeparture'] if stopover['plannedDeparture'] is not None else None),
+                    'departure_actual_time': (stopover['departure'] if stopover['departure'] is not None else None),
+                    'arrival_planned_time': (stopover['plannedArrival'] if stopover['plannedArrival'] is not None else None),
+                    'arrival_actual_time': (stopover['arrival'] if stopover['arrival'] is not None else None)
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info('Stopopver %s was created with id %s.',
+                                     idx, result['id'])
+                    else:
+                        logging.error('%s', response.text)
+        else:
+            logging.error('%s', response.text)
+    return result
+
+
+def get_or_create_remark(train: dict, message: str):
+    result = None
+    url = '{}/remarks/'.format(Settings().internal_api_url)
+    params = {
+        'train': train['id'],
+        'message': message,
+    }
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            response = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
+                logging.debug('Remark %s was found with id %s.',
+                              message, result['id'])
+            else:
+                data = {
+                    'train': train['url'],
+                    'message': message,
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info(
+                            'Remark %s was created with id %s.', message, result['id'])
+                    else:
+                        logging.error('%s', response.text)
+        else:
+            logging.error('%s', response.text)
+    return result
+
+
+def get_or_create_composition():
+    pass
 
 
 def main():
@@ -400,14 +604,14 @@ def main():
 
         logging.info('%s / %s (%s)', idx, station_list_len, station['name'])
 
-        train_list.extend(get_time_table(eva_number=station['eva_number']))
+        train_list.extend(get_time_table(eva_number=station['id']))
 
-        filtered_train_list = []
+    filtered_train_list = []
 
-        filtered_train_list = [item for item in train_list if item.get(
-            'tripID') not in filtered_train_list]
+    filtered_train_list = [item for item in train_list if item.get(
+        'tripID') not in filtered_train_list]
 
-        filtered_train_list_len = len(filtered_train_list)
+    filtered_train_list_len = len(filtered_train_list)
 
     for idx, item in enumerate(filtered_train_list, start=1):
         logging.info('%s / %s (%s)', idx,
@@ -416,7 +620,40 @@ def main():
         train_details = get_train_trip(
             line_name=item['line']['name'], trip_id=item['tripId'])
 
-        create_or_update_train(train_details)
+        # Check if the operator of the train exists
+        operator = get_or_create_operator(
+            name=item['line']['operator']['name'])
+
+        # Check if the line of the train exists
+        line = get_or_create_line(
+            operator=operator, product=item['line']['productName'], number=item['line']['fahrtNr'], name=item['line']['name'])
+        pass
+
+        # Check if the origin of the train exists
+        origin = get_or_create_station(eva_number=train_details['origin']['id'], name=train_details['origin']['name'],
+                                       lng=train_details['origin']['location']['longitude'], lat=train_details['origin']['location']['latitude'])
+
+        # Check if the destitnation of the train exists
+        destination = get_or_create_station(eva_number=train_details['destination']['id'], name=train_details['destination']['name'],
+                                            lng=train_details['destination']['location']['longitude'], lat=train_details['destination']['location']['latitude'])
+
+        # Create or update the train
+        train = create_or_update_train(
+            line=line, trip_id=item['tripId'], origin=origin, destination=destination)
+
+        # Create all stopovers
+
+        for idx, stopover in enumerate(train_details['stopovers']):
+            if not 'cancelled' in stopover:
+                create_or_update_stopover(
+                    idx=idx, stopover=stopover, train=train)
+
+        # Create all remarks 
+
+        for idx, remark in enumerate(train_details['remarks']):
+                get_or_create_remark(message=remark['text'], train=train)
+
+        # Create the composition
 
     end_time = datetime.now()
     logging.info('finished execution. Duration %s', (end_time - start_time))
@@ -432,14 +669,10 @@ if __name__ == '__main__':
         else:
             logging.info('%s : NO_LOG', key)
 
-    http_session = CachedLimiterSession(
-        per_minute=Settings().rate_limit,
-        bucket_class=MemoryQueueBucket,
-        backend=SQLiteCache(name='http_cache'),
-        expire_after=timedelta(seconds=3600),
-        cache_control=False,
-        allowable_codes=[200]
-    )
+    external_session = LimiterSession(
+        per_minute=Settings().external_rate_limit)
+    internal_session = LimiterSession(
+        per_minute=Settings().internal_rate_limit)
 
     schedule.every().minute.do(main)
 
