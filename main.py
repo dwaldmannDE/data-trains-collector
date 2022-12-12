@@ -2,17 +2,12 @@
 import json
 import logging
 import logging.config
-import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List
 
-import dateutil.parser
-import schedule
 from pydantic import BaseSettings
-from pyrate_limiter import Duration, RequestRate
-from requests import Session
 from requests_ratelimiter import LimiterSession
 
 
@@ -173,7 +168,8 @@ def get_composition(train_number: str, eva_number: int, departure: datetime):
     # .strftime('%Y-%m-%dT%H:%M%:00.000Z')
     formatted_departure_time = departure
 
-    url = '{}/api/reihung/v4/wagen/{}'.format(Settings().coach_sequence_api_url, train_number)
+    url = '{}/api/reihung/v4/wagen/{}'.format(
+        Settings().coach_sequence_api_url, train_number)
     params = {
         'departure': formatted_departure_time,
         'evaNumber': eva_number
@@ -421,7 +417,7 @@ def get_or_create_station(eva_number: int, name: str, lng: float, lat: float):
             if response['count'] > 0:
                 result = response['results'][0]
                 logging.debug('Station %s was found with id %s.',
-                            name, result['id'])
+                              name, result['id'])
             else:
                 data = {
                     'eva_number': eva_number,
@@ -431,7 +427,7 @@ def get_or_create_station(eva_number: int, name: str, lng: float, lat: float):
                 }
                 with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
                     logging.debug('%s %s %s', response.request.method,
-                                response.status_code, response.request.url)
+                                  response.status_code, response.request.url)
                     if response.ok:
                         result = response.json()
                         logging.info(
@@ -628,71 +624,78 @@ def main():
     start_time = datetime.now()
     logging.info('started execution')
 
-    station_list = get_station_list(usage='FV')
-    station_list_len = len(station_list)
+    try:
 
-    train_list = []
+        station_list = get_station_list(usage='FV')
+        station_list_len = len(station_list)
 
-    for idx, station in enumerate(station_list, start=1):
+        train_list = []
 
-        logging.info('%s / %s (%s)', idx, station_list_len, station['name'])
+        for idx, station in enumerate(station_list, start=1):
 
-        train_list.extend(get_time_table(eva_number=station['eva_number']))
+            logging.info('%s / %s (%s)', idx,
+                         station_list_len, station['name'])
 
-    filtered_train_list = []
+            train_list.extend(get_time_table(eva_number=station['eva_number']))
 
-    filtered_train_list = [item for item in train_list if item.get(
-        'tripID') not in filtered_train_list]
+        filtered_train_list = []
 
-    filtered_train_list_len = len(filtered_train_list)
+        filtered_train_list = [item for item in train_list if item.get(
+            'tripID') not in filtered_train_list]
 
-    for idx, item in enumerate(filtered_train_list, start=1):
-        logging.info('%s / %s (%s)', idx,
-                     filtered_train_list_len, item['line']['name'])
+        filtered_train_list_len = len(filtered_train_list)
 
-        train_details = get_train_trip(
-            line_name=item['line']['name'], trip_id=item['tripId'])
+        for idx, item in enumerate(filtered_train_list, start=1):
+            logging.info('%s / %s (%s)', idx,
+                         filtered_train_list_len, item['line']['name'])
 
-        # Check if the operator of the train exists
-        operator = get_or_create_operator(
-            name=item['line']['operator']['name'])
+            train_details = get_train_trip(
+                line_name=item['line']['name'], trip_id=item['tripId'])
 
-        # Check if the line of the train exists
-        line = get_or_create_line(
-            operator=operator, product=item['line']['productName'], number=item['line']['fahrtNr'], name=item['line']['name'])
-        pass
+            # Check if the operator of the train exists
+            operator = get_or_create_operator(
+                name=item['line']['operator']['name'])
 
-        # Check if the origin of the train exists
-        origin = get_or_create_station(eva_number=train_details['origin']['id'], name=train_details['origin']['name'],
-                                       lng=train_details['origin']['location']['longitude'], lat=train_details['origin']['location']['latitude'])
+            # Check if the line of the train exists
+            line = get_or_create_line(
+                operator=operator, product=item['line']['productName'], number=item['line']['fahrtNr'], name=item['line']['name'])
+            pass
 
-        # Check if the destitnation of the train exists
-        destination = get_or_create_station(eva_number=train_details['destination']['id'], name=train_details['destination']['name'],
-                                            lng=train_details['destination']['location']['longitude'], lat=train_details['destination']['location']['latitude'])
+            # Check if the origin of the train exists
+            origin = get_or_create_station(eva_number=train_details['origin']['id'], name=train_details['origin']['name'],
+                                           lng=train_details['origin']['location']['longitude'], lat=train_details['origin']['location']['latitude'])
 
-        # Create or update the train
-        train = create_or_update_train(
-            line=line, trip_id=item['tripId'], origin=origin, destination=destination)
+            # Check if the destitnation of the train exists
+            destination = get_or_create_station(eva_number=train_details['destination']['id'], name=train_details['destination']['name'],
+                                                lng=train_details['destination']['location']['longitude'], lat=train_details['destination']['location']['latitude'])
 
-        # Create all stopovers
+            # Create or update the train
+            train = create_or_update_train(
+                line=line, trip_id=item['tripId'], origin=origin, destination=destination)
 
-        for idx, stopover in enumerate(train_details['stopovers']):
-            if not 'cancelled' in stopover:
-                create_or_update_stopover(
-                    idx=idx, stopover=stopover, train=train)
+            # Create all stopovers
 
-        # Create all remarks 
+            for idx, stopover in enumerate(train_details['stopovers']):
+                if not 'cancelled' in stopover:
+                    create_or_update_stopover(
+                        idx=idx, stopover=stopover, train=train)
 
-        for idx, remark in enumerate(train_details['remarks']):
+            # Create all remarks
+
+            for idx, remark in enumerate(train_details['remarks']):
                 get_or_create_remark(message=remark['text'], train=train)
 
-        # Create the composition
+            # Create the composition
 
-        if not train['cancelled']:
+            if not train['cancelled']:
 
-            composition_data = get_composition(train_number=line['number'],eva_number=train_details['origin']['id'],departure=train_details['stopovers'][0]['plannedDeparture'])
-            if composition_data:
-                composition = get_or_create_composition(train=train, composition=composition_data)
+                composition_data = get_composition(
+                    train_number=line['number'], eva_number=train_details['origin']['id'], departure=train_details['stopovers'][0]['plannedDeparture'])
+                if composition_data:
+                    composition = get_or_create_composition(
+                        train=train, composition=composition_data)
+    except Exception as e:
+        logging.error('%s', e)
 
     end_time = datetime.now()
     logging.info('finished execution. Duration %s', (end_time - start_time))
@@ -709,16 +712,10 @@ if __name__ == '__main__':
             logging.info('%s : NO_LOG', key)
 
     external_session = LimiterSession(
-        per_minute=Settings().external_rate_limit, per_host=True)
+        per_minute=Settings().external_rate_limit)
     internal_session = LimiterSession(
         per_minute=Settings().internal_rate_limit)
 
-    schedule.every().hour.do(main)
-
-    main()
-
     while True:
-        schedule.run_pending()
+        main()
         time.sleep(60)
-
-    # main()

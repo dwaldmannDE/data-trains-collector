@@ -1,7 +1,2 @@
-autopep8
 pydantic
-python-dateutil
-requests
 requests-ratelimiter
-pyrate_limiter
-schedule
