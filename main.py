@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     internal_api_username: str = 'admin'
     internal_api_password: str = 'password'
     coach_sequence_api_url: str = 'https://bahn.expert'
-    hafas_api_url: str = 'https://env-5567344.jcloud-ver-jpe.ik-server.com/'
+    hafas_api_url: str = 'https://env-5567344.jcloud-ver-jpe.ik-server.com'
     query_when: str = 'now'
     query_duration: int = 60
     query_language: str = 'de'
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     query_remarks: bool = 'true'
     query_polyline: bool = 'false'
     external_rate_limit: int = 90
-    internal_rate_limit: int = 550
+    internal_rate_limit: int = 5950
     debug: bool = 'true'
 
 
@@ -271,7 +271,7 @@ def get_time_table(eva_number: str) -> List[Dict]:
     return time_table
 
 
-def get_station_list(usage: str) -> List[Dict]:
+def get_station_list() -> List[Dict]:
     """
     Retrieves a list of stations from the internal API.
 
@@ -288,12 +288,13 @@ def get_station_list(usage: str) -> List[Dict]:
     """
 
     url = '{}/stations'.format(Settings().internal_api_url)
+
     params = {
-        'usage': usage
+        'query': True
     }
 
     try:
-        with internal_session.get(url=url, params=params) as response:
+        with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
 
             # If the response is successful, process the data
             if response.ok:
@@ -423,7 +424,8 @@ def get_or_create_station(eva_number: int, name: str, lng: float, lat: float):
                     'eva_number': eva_number,
                     'name': name,
                     'lng': lng,
-                    'lat': lat
+                    'lat': lat,
+                    'query': False
                 }
                 with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
                     logging.debug('%s %s %s', response.request.method,
@@ -527,7 +529,7 @@ def create_or_update_stopover(idx: int, stopover: dict, train: dict):
                 #             if response.ok:
                 #                 result = response.json()
                 #                 logging.info(
-                #                     'Stopopver %s was updated with id %s.', idx, result['id'])
+                #                     'Stopopver (Arrival) %s was updated with id %s.', idx, result['id'])
                 #             else:
                 #                 logging.error('%s', response.text)
                     
@@ -545,7 +547,7 @@ def create_or_update_stopover(idx: int, stopover: dict, train: dict):
                 #             if response.ok:
                 #                 result = response.json()
                 #                 logging.info(
-                #                     'Stopopver %s was updated with id %s.', idx, result['id'])
+                #                     'Stopopver (Departure) %s was updated with id %s.', idx, result['id'])
                 #             else:
                 #                 logging.error('%s', response.text)
             else:
@@ -634,7 +636,7 @@ def get_or_create_composition(train: dict, composition: dict):
                     if response.ok:
                         result = response.json()
                         logging.info(
-                            'Composition for train %ss was created with id %s.', train['name'], result['id'])
+                            'Composition for train %s was created with id %s.', train['name'], result['id'])
                     else:
                         logging.error('%s', response.text)
         else:
@@ -648,7 +650,7 @@ def main():
 
     try:
 
-        station_list = get_station_list(usage='FV')
+        station_list = get_station_list()
         station_list_len = len(station_list)
 
         train_list = []
@@ -659,11 +661,15 @@ def main():
                          station_list_len, station['name'])
 
             train_list.extend(get_time_table(eva_number=station['eva_number']))
+            logging.info('%s trains to process.', len(train_list))
 
-        filtered_train_list = []
 
-        filtered_train_list = [item for item in train_list if item.get(
-            'tripID') not in filtered_train_list]
+        filtered_train_list = list(
+        {
+            item['tripId']: item
+            for item in train_list
+        }.values()
+    )
 
         filtered_train_list_len = len(filtered_train_list)
 
