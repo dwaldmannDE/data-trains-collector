@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     coach_sequence_api_url: str = 'https://bahn.expert'
     hafas_api_url: str = 'https://v5.db.transport.rest'
     query_when: str = 'now'
-    query_duration: int = 480
+    query_duration: int = 120
     query_language: str = 'de'
     query_bus: bool = 'false'
     query_ferry: bool = 'false'
@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     query_tram: bool = 'false'
     query_taxi: bool = 'false'
     query_suburban: bool = 'false'
-    query_regional: bool = 'true'
-    query_regionalexp: bool = 'true'
+    query_regional: bool = 'false'
+    query_regionalexp: bool = 'false'
     query_national: bool = 'true'
     query_nationalexpress: bool = 'true'
     query_stopovers: bool = 'true'
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     query_remarks: bool = 'true'
     query_polyline: bool = 'false'
     external_rate_limit: int = 90
-    internal_rate_limit: int = 500
+    internal_rate_limit: int = 550
     debug: bool = 'true'
 
 
@@ -169,11 +169,11 @@ def get_arrival_board(eva_number: int):
     return result
 
 
-def get_composition(train_name: str, eva_number: int, departure: datetime):
+def get_composition(train_number: str, eva_number: int, departure: datetime):
     # .strftime('%Y-%m-%dT%H:%M%:00.000Z')
     formatted_departure_time = departure
 
-    url = '{}/api/reihung/v4/wagen/{}'.format(Settings().coach_sequence_api_url, train_name)
+    url = '{}/api/reihung/v4/wagen/{}'.format(Settings().coach_sequence_api_url, train_number)
     params = {
         'departure': formatted_departure_time,
         'evaNumber': eva_number
@@ -417,27 +417,29 @@ def get_or_create_station(eva_number: int, name: str, lng: float, lat: float):
         logging.debug('%s %s %s', response.request.method,
                       response.status_code, response.request.url)
         if response.ok:
-            result = response.json()
+            response = response.json()
             if response['count'] > 0:
                 result = response['results'][0]
-            logging.debug('Station %s was found with id %s.',
-                          name, result['id'])
+                logging.debug('Station %s was found with id %s.',
+                            name, result['id'])
+            else:
+                data = {
+                    'eva_number': eva_number,
+                    'name': name,
+                    'lng': lng,
+                    'lat': lat
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info(
+                            'Station %s was created with id %s.', name, result['id'])
+                    else:
+                        logging.error('%s', response.text)
         else:
-            data = {
-                'eva_number': eva_number,
-                'name': name,
-                'lng': lng,
-                'lat': lat
-            }
-            with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
-                logging.debug('%s %s %s', response.request.method,
-                              response.status_code, response.request.url)
-                if response.ok:
-                    result = response.json()
-                    logging.info(
-                        'Station %s was created with id %s.', name, result['id'])
-                else:
-                    logging.error('%s', response.text)
+            logging.error('%s', response.text)
     return result
 
 
@@ -606,7 +608,7 @@ def get_or_create_composition(train: dict, composition: dict):
             else:
                 data = {
                     'train': train['url'],
-                    'composition': json.dumps(composition),
+                    'coach_sequence': json.dumps(composition),
                 }
                 with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
                     logging.debug('%s %s %s', response.request.method,
@@ -688,9 +690,9 @@ def main():
 
         if not train['cancelled']:
 
-            composition_data = get_composition(train_name=train['name'],eva_number=train_details['origin']['id'],departure=train_details['stopovers'][0]['plannedDeparture'])
-
-            composition = get_or_create_composition(train=train, composition=composition_data)
+            composition_data = get_composition(train_number=line['number'],eva_number=train_details['origin']['id'],departure=train_details['stopovers'][0]['plannedDeparture'])
+            if composition_data:
+                composition = get_or_create_composition(train=train, composition=composition_data)
 
     end_time = datetime.now()
     logging.info('finished execution. Duration %s', (end_time - start_time))
@@ -707,18 +709,11 @@ if __name__ == '__main__':
             logging.info('%s : NO_LOG', key)
 
     external_session = LimiterSession(
-        per_minute=Settings().external_rate_limit)
+        per_minute=Settings().external_rate_limit, per_host=True)
     internal_session = LimiterSession(
         per_minute=Settings().internal_rate_limit)
 
     schedule.every().hour.do(main)
-
-    # schedule.every(10).minutes.do(job)
-    # schedule.every().hour.do(job)
-    # schedule.every().day.at("10:30").do(job)
-    # schedule.every().monday.do(job)
-    # schedule.every().wednesday.at("13:15").do(job)
-    # schedule.every().minute.at(":17").do(job)
 
     main()
 
