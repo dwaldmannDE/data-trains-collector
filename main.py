@@ -703,9 +703,9 @@ def main():
                         idx=idx, stopover=stopover, train=train)
 
             # Create all remarks
-
-            for idx, remark in enumerate(train_details['remarks']):
-                get_or_create_remark(message=remark['text'], train=train)
+            if 'remarks' in train_details:
+                for idx, remark in enumerate(train_details['remarks']):
+                    get_or_create_remark(message=remark['text'], train=train)
 
             # Create the composition
 
