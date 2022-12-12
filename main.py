@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     coach_sequence_api_url: str = 'https://bahn.expert'
     hafas_api_url: str = 'https://v5.db.transport.rest'
     query_when: str = 'now'
-    query_duration: int = 120
+    query_duration: int = 60
     query_language: str = 'de'
     query_bus: bool = 'false'
     query_ferry: bool = 'false'
@@ -517,7 +517,7 @@ def create_or_update_stopover(idx: int, stopover: dict, train: dict):
                 # Check if the 'arrival' or 'departure' key exists in the dictionary.
                 if 'arrival' in stopover or 'departure' in stopover:
                     # If the 'arrival' key exists, check if its value is later than the current time.
-                    if 'arrival' in stopover and stopover['arrival'] > now:
+                    if 'arrival' in stopover:
                         url = result['url']
                         data = {
                             'arrival_actual_time': (stopover['arrival'] if stopover['arrival'] is not None else None)
@@ -533,7 +533,7 @@ def create_or_update_stopover(idx: int, stopover: dict, train: dict):
                                 logging.error('%s', response.text)
                     
                     # If the 'departure' key exists, check if its value is later than the current time.
-                    if 'departure' in stopover and stopover['departure'] > now:
+                    if 'departure' in stopover:
                         # The 'departure' time is later than the current time, so we can run the code.
                         # (Replace this with the code you want to run.)
                         url = result['url']
@@ -549,11 +549,6 @@ def create_or_update_stopover(idx: int, stopover: dict, train: dict):
                                     'Stopopver %s was updated with id %s.', idx, result['id'])
                             else:
                                 logging.error('%s', response.text)
-
-
-
-
-
             else:
                 data = {
                     'station': station['url'],
