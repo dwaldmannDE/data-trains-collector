@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     internal_api_url: str = 'http://127.0.0.1:8000'
     internal_api_username: str = 'admin'
     internal_api_password: str = 'password'
-    coach_sequence_base_url: str = 'https://bahn.expert'
-    hafas_base_url: str = 'https://v5.db.transport.rest'
+    coach_sequence_api_url: str = 'https://bahn.expert'
+    hafas_api_url: str = 'https://v5.db.transport.rest'
     query_when: str = 'now'
     query_duration: int = 480
     query_language: str = 'de'
@@ -68,7 +68,7 @@ def get_departure_board(eva_number: int):
   """
     # Create the URL using the provided EVA number
     url = '{}/stops/{}/departures'.format(
-        Settings().hafas_base_url, eva_number)
+        Settings().hafas_api_url, eva_number)
 
     # Create the parameters dictionary with all the settings values
     params = {
@@ -126,7 +126,7 @@ def get_arrival_board(eva_number: int):
 
     # Create the URL using the provided EVA number
     url = '{}/stops/{}/arrivals'.format(
-        Settings().hafas_base_url, eva_number)
+        Settings().hafas_api_url, eva_number)
 
     # Create the parameters dictionary with all the settings values
     params = {
@@ -169,14 +169,12 @@ def get_arrival_board(eva_number: int):
     return result
 
 
-def get_composition(train_number: str, eva_number: int, initial_departure: datetime, departure_time: datetime):
-    formatted_initial_departure = initial_departure
+def get_composition(train_name: str, eva_number: int, departure: datetime):
     # .strftime('%Y-%m-%dT%H:%M%:00.000Z')
-    formatted_departure_time = departure_time
+    formatted_departure_time = departure
 
-    url = '{}/api/reihung/v4/wagen/{}'.format(Settings().api_url, train_number)
+    url = '{}/api/reihung/v4/wagen/{}'.format(Settings().coach_sequence_api_url, train_name)
     params = {
-        'initialDeparture': formatted_initial_departure,
         'departure': formatted_departure_time,
         'evaNumber': eva_number
     }
@@ -184,7 +182,7 @@ def get_composition(train_number: str, eva_number: int, initial_departure: datet
         with external_session.get(url=url, params=params) as response:
             logging.debug('%s %s %s', response.request.method,
                           response.status_code, response.request.url)
-            if response.status_code == 200:
+            if response.ok:
                 resp = response.json()
                 if resp['sequence']:
                     if resp['sequence']['groups']:
@@ -219,7 +217,7 @@ def get_train_trip(line_name: str, trip_id: str, stopovers: bool = True,
     """
 
     # Set the URL for the HAFAS API with the specified trip ID
-    url = '{}/trips/{}'.format(Settings().hafas_base_url, trip_id)
+    url = '{}/trips/{}'.format(Settings().hafas_api_url, trip_id)
 
     # Set the query parameters for the request
     params = {
@@ -411,19 +409,22 @@ def get_or_create_line(operator: dict, product: str, number: int, name: str):
 
 def get_or_create_station(eva_number: int, name: str, lng: float, lat: float):
     result = None
-    url = '{}/stations/{}'.format(Settings().internal_api_url, eva_number)
-    with internal_session.get(url=url, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+    url = '{}/stations/'.format(Settings().internal_api_url, eva_number)
+    params = {
+        'eva_number': eva_number,
+    }
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
         logging.debug('%s %s %s', response.request.method,
                       response.status_code, response.request.url)
         if response.ok:
             result = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
             logging.debug('Station %s was found with id %s.',
                           name, result['id'])
         else:
-            url = url = '{}/stations/'.format(
-                Settings().internal_api_url, eva_number)
             data = {
-                'id': eva_number,
+                'eva_number': eva_number,
                 'name': name,
                 'lng': lng,
                 'lat': lat
@@ -587,8 +588,38 @@ def get_or_create_remark(train: dict, message: str):
     return result
 
 
-def get_or_create_composition():
-    pass
+def get_or_create_composition(train: dict, composition: dict):
+    result = None
+    url = '{}/compositions/'.format(Settings().internal_api_url)
+    params = {
+        'train': train['id'],
+    }
+    with internal_session.get(url=url, params=params, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+        logging.debug('%s %s %s', response.request.method,
+                      response.status_code, response.request.url)
+        if response.ok:
+            response = response.json()
+            if response['count'] > 0:
+                result = response['results'][0]
+                logging.debug('Composition for train %s was found with id %s.',
+                              train['name'], result['id'])
+            else:
+                data = {
+                    'train': train['url'],
+                    'composition': json.dumps(composition),
+                }
+                with internal_session.post(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                    logging.debug('%s %s %s', response.request.method,
+                                  response.status_code, response.request.url)
+                    if response.ok:
+                        result = response.json()
+                        logging.info(
+                            'Composition for train %ss was created with id %s.', train['name'], result['id'])
+                    else:
+                        logging.error('%s', response.text)
+        else:
+            logging.error('%s', response.text)
+    return result
 
 
 def main():
@@ -604,7 +635,7 @@ def main():
 
         logging.info('%s / %s (%s)', idx, station_list_len, station['name'])
 
-        train_list.extend(get_time_table(eva_number=station['id']))
+        train_list.extend(get_time_table(eva_number=station['eva_number']))
 
     filtered_train_list = []
 
@@ -655,6 +686,12 @@ def main():
 
         # Create the composition
 
+        if not train['cancelled']:
+
+            composition_data = get_composition(train_name=train['name'],eva_number=train_details['origin']['id'],departure=train_details['stopovers'][0]['plannedDeparture'])
+
+            composition = get_or_create_composition(train=train, composition=composition_data)
+
     end_time = datetime.now()
     logging.info('finished execution. Duration %s', (end_time - start_time))
 
@@ -674,7 +711,7 @@ if __name__ == '__main__':
     internal_session = LimiterSession(
         per_minute=Settings().internal_rate_limit)
 
-    schedule.every().minute.do(main)
+    schedule.every().hour.do(main)
 
     # schedule.every(10).minutes.do(job)
     # schedule.every().hour.do(job)
