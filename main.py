@@ -513,42 +513,41 @@ def create_or_update_stopover(idx: int, stopover: dict, train: dict):
                 logging.debug('Stopover %s was found with id %s.',
                               idx, result['id'])
 
-                now = datetime.now()
-                # Check if the 'arrival' or 'departure' key exists in the dictionary.
-                if 'arrival' in stopover or 'departure' in stopover:
-                    # If the 'arrival' key exists, check if its value is later than the current time.
-                    if 'arrival' in stopover:
-                        url = result['url']
-                        data = {
-                            'arrival_actual_time': (stopover['arrival'] if stopover['arrival'] is not None else None)
-                        }
-                        with internal_session.patch(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
-                            logging.debug('%s %s %s', response.request.method,
-                                        response.status_code, response.request.url)
-                            if response.ok:
-                                result = response.json()
-                                logging.info(
-                                    'Stopopver %s was updated with id %s.', idx, result['id'])
-                            else:
-                                logging.error('%s', response.text)
+                # # Check if the 'arrival' or 'departure' key exists in the dictionary.
+                # if 'arrival' in stopover or 'departure' in stopover:
+                #     # If the 'arrival' key exists, check if its value is later than the current time.
+                #     if 'arrival' in stopover:
+                #         url = result['url']
+                #         data = {
+                #             'arrival_actual_time': (stopover['arrival'] if stopover['arrival'] is not None else None)
+                #         }
+                #         with internal_session.patch(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                #             logging.debug('%s %s %s', response.request.method,
+                #                         response.status_code, response.request.url)
+                #             if response.ok:
+                #                 result = response.json()
+                #                 logging.info(
+                #                     'Stopopver %s was updated with id %s.', idx, result['id'])
+                #             else:
+                #                 logging.error('%s', response.text)
                     
-                    # If the 'departure' key exists, check if its value is later than the current time.
-                    if 'departure' in stopover:
-                        # The 'departure' time is later than the current time, so we can run the code.
-                        # (Replace this with the code you want to run.)
-                        url = result['url']
-                        data = {
-                            'departure_actual_time': (stopover['departure'] if stopover['departure'] is not None else None),
-                        }
-                        with internal_session.patch(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
-                            logging.debug('%s %s %s', response.request.method,
-                                        response.status_code, response.request.url)
-                            if response.ok:
-                                result = response.json()
-                                logging.info(
-                                    'Stopopver %s was updated with id %s.', idx, result['id'])
-                            else:
-                                logging.error('%s', response.text)
+                #     # If the 'departure' key exists, check if its value is later than the current time.
+                #     if 'departure' in stopover:
+                #         # The 'departure' time is later than the current time, so we can run the code.
+                #         # (Replace this with the code you want to run.)
+                #         url = result['url']
+                #         data = {
+                #             'departure_actual_time': (stopover['departure'] if stopover['departure'] is not None else None),
+                #         }
+                #         with internal_session.patch(url=url, data=data, auth=(Settings().internal_api_username, Settings().internal_api_password)) as response:
+                #             logging.debug('%s %s %s', response.request.method,
+                #                         response.status_code, response.request.url)
+                #             if response.ok:
+                #                 result = response.json()
+                #                 logging.info(
+                #                     'Stopopver %s was updated with id %s.', idx, result['id'])
+                #             else:
+                #                 logging.error('%s', response.text)
             else:
                 data = {
                     'station': station['url'],
