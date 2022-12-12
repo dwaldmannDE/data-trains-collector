@@ -89,7 +89,7 @@ def get_departure_board(eva_number: int):
 
     try:
         # Send the GET request and get the response
-        response = external_session.get(url=url, params=params)
+        response = internal_session.get(url=url, params=params)
 
         # Log the request and response
         logging.debug('%s %s %s', response.request.method,
@@ -147,7 +147,7 @@ def get_arrival_board(eva_number: int):
 
     try:
         # Send the GET request and get the response
-        response = external_session.get(url=url, params=params)
+        response = internal_session.get(url=url, params=params)
 
         # Log the request and response
         logging.debug('%s %s %s', response.request.method,
@@ -226,7 +226,7 @@ def get_train_trip(line_name: str, trip_id: str, stopovers: bool = True,
 
     # Make the GET request to the HAFAS API
     try:
-        with external_session.get(url=url, params=params) as response:
+        with internal_session.get(url=url, params=params) as response:
             # Log the request method, response status code, and URL
             logging.debug('%s %s %s', response.request.method,
                           response.status_code, response.request.url)
