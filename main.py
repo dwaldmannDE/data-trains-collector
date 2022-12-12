@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     internal_api_username: str = 'admin'
     internal_api_password: str = 'password'
     coach_sequence_api_url: str = 'https://bahn.expert'
-    hafas_api_url: str = 'https://v5.db.transport.rest'
+    hafas_api_url: str = 'https://env-5567344.jcloud-ver-jpe.ik-server.com/'
     query_when: str = 'now'
     query_duration: int = 60
     query_language: str = 'de'
